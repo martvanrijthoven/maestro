@@ -5,6 +5,8 @@ from typing import Literal, Optional
 
 import dacite
 import lightning
+import mlflow
+import mlflow.pytorch
 import numpy as np
 import supervision as sv
 import torch
@@ -86,6 +88,14 @@ class Florence2Configuration:
             Random seed for ensuring reproducibility. If None, no seeding is applied.
         peft_advanced_params (Optional[dict]):
             Custom LoRA configuration . If None, default configuration is applied.
+        enable_mlflow (bool):
+            Whether to enable MLflow tracking for experiments.
+        mlflow_experiment_name (Optional[str]):
+            Name of the MLflow experiment. If None, uses "florence2_training".
+        mlflow_tracking_uri (Optional[str]):
+            MLflow tracking URI. If None, uses default local storage.
+        limit_train_batches (Optional[int]):
+            Maximum number of training batches per epoch. If None, trains for full epochs.
     """
 
     dataset: str
@@ -106,6 +116,10 @@ class Florence2Configuration:
     max_new_tokens: int = 1024
     random_seed: Optional[int] = None
     peft_advanced_params: Optional[dict] = None
+    enable_mlflow: bool = False
+    mlflow_experiment_name: Optional[str] = None
+    mlflow_tracking_uri: Optional[str] = None
+    limit_train_batches: Optional[int] = None
 
     def __post_init__(self):
         if self.val_batch_size is None:
@@ -137,6 +151,7 @@ class Florence2Trainer(MaestroTrainer):
     def __init__(self, processor, model, train_loader, valid_loader, config):
         super().__init__(processor, model, train_loader, valid_loader)
         self.config = config
+        print(self.config)
 
         # TODO: Redesign metric tracking system
         self.train_metrics_tracker = MetricsTracker.init(metrics=["loss"])
@@ -146,6 +161,32 @@ class Florence2Trainer(MaestroTrainer):
                 metrics += metric.describe()
         self.valid_metrics_tracker = MetricsTracker.init(metrics=metrics)
 
+        # Initialize MLflow tracking if enabled
+        if self.config.enable_mlflow:
+            self._setup_mlflow()
+
+    def _setup_mlflow(self):
+        """Initialize MLflow tracking"""
+        if self.config.mlflow_tracking_uri:
+            mlflow.set_tracking_uri(self.config.mlflow_tracking_uri)
+        
+        experiment_name = self.config.mlflow_experiment_name or "florence2_training"
+        mlflow.set_experiment(experiment_name)
+        
+        # Start MLflow run if not already active
+        if not mlflow.active_run():
+            mlflow.start_run()
+            
+        # Log configuration parameters
+        mlflow.log_params({
+            "model_id": self.config.model_id,
+            "epochs": self.config.epochs,
+            "learning_rate": self.config.lr,
+            "batch_size": self.config.batch_size,
+            "optimization_strategy": self.config.optimization_strategy,
+            "limit_train_batches": self.config.limit_train_batches,
+        })
+
     def training_step(self, batch, batch_idx):
         input_ids, pixel_values, labels = batch
         outputs = self.model(
@@ -154,8 +195,16 @@ class Florence2Trainer(MaestroTrainer):
             labels=labels,
         )
         loss = outputs.loss
+        
+        # Log to Lightning
         self.log("train_loss", loss, prog_bar=True, logger=True, batch_size=self.config.batch_size)
         self.train_metrics_tracker.register("loss", epoch=self.current_epoch, step=batch_idx, value=loss.item())
+        
+        # Log to MLflow if enabled
+        if self.config.enable_mlflow and mlflow.active_run():
+            mlflow.log_metric("train_loss", loss.item(), step=batch_idx)
+            # mlflow.log_metric("epoch", self.current_epoch, step=batch_idx)
+        
         return loss
 
     def validation_step(self, batch, batch_idx):
@@ -208,6 +257,10 @@ class Florence2Trainer(MaestroTrainer):
                         value=value,
                     )
                     self.log(key, value, prog_bar=True, logger=True, batch_size=self.config.val_batch_size)
+                    # Log to MLflow if enabled
+                    if self.config.enable_mlflow and mlflow.active_run():
+                        # Use current epoch for validation metrics since they're computed per epoch
+                        mlflow.log_metric(f"val_{key}", value, step=self.current_epoch)
             else:
                 result = metric.compute(predictions=generated_suffixes, targets=suffixes)
                 for key, value in result.items():
@@ -218,6 +271,10 @@ class Florence2Trainer(MaestroTrainer):
                         value=value,
                     )
                     self.log(key, value, prog_bar=True, logger=True, batch_size=self.config.val_batch_size)
+                    # Log to MLflow if enabled
+                    if self.config.enable_mlflow and mlflow.active_run():
+                        # Use current epoch for validation metrics since they're computed per epoch
+                        mlflow.log_metric(f"val_{key}", value, step=self.current_epoch)
 
     def configure_optimizers(self):
         optimizer = AdamW(self.model.parameters(), lr=self.config.lr)
@@ -230,6 +287,21 @@ class Florence2Trainer(MaestroTrainer):
             validation_tracker=self.valid_metrics_tracker,
             output_dir=save_metrics_path,
         )
+        
+        # # Log model to MLflow if enabled
+        # if self.config.enable_mlflow and mlflow.active_run():
+        #     try:
+        #         mlflow.pytorch.log_model(
+        #             pytorch_model=self.model,
+        #             artifact_path="model",
+        #             registered_model_name=f"florence2_{self.config.optimization_strategy}"
+        #         )
+        #         logger.info("Model logged to MLflow successfully")
+        #     except Exception as e:
+        #         logger.warning(f"Failed to log model to MLflow: {e}")
+            
+        #     # End the MLflow run
+        #     mlflow.end_run()
 
 
 def train(config: Florence2Configuration | dict) -> None:
@@ -277,7 +349,8 @@ def train(config: Florence2Configuration | dict) -> None:
         max_epochs=config.epochs,
         accumulate_grad_batches=config.accumulate_grad_batches,
         check_val_every_n_epoch=1,
-        limit_val_batches=1,
+        limit_train_batches=config.limit_train_batches,
+        limit_val_batches=1.0,
         log_every_n_steps=10,
         callbacks=[save_checkpoint_callback],
     )
