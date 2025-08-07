@@ -96,6 +96,8 @@ class Florence2Configuration:
             MLflow tracking URI. If None, uses default local storage.
         limit_train_batches (Optional[int]):
             Maximum number of training batches per epoch. If None, trains for full epochs.
+        limit_val_batches (Optional[int]):
+            Maximum number of validation batches per epoch. If None, uses all validation data.
     """
 
     dataset: str
@@ -120,6 +122,7 @@ class Florence2Configuration:
     mlflow_experiment_name: Optional[str] = None
     mlflow_tracking_uri: Optional[str] = None
     limit_train_batches: Optional[int] = None
+    limit_val_batches: Optional[int] = None
 
     def __post_init__(self):
         if self.val_batch_size is None:
@@ -354,7 +357,7 @@ def train(config: Florence2Configuration | dict) -> None:
         accumulate_grad_batches=config.accumulate_grad_batches,
         check_val_every_n_epoch=1,
         limit_train_batches=config.limit_train_batches,
-        limit_val_batches=1,
+        limit_val_batches=config.limit_val_batches,
         log_every_n_steps=10,
         callbacks=[save_checkpoint_callback],
         default_root_dir=config.output_dir,  # Keep Lightning logs in output_dir
