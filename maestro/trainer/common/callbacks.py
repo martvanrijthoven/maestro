@@ -30,8 +30,15 @@ class SaveCheckpoint(Callback):
         # Log checkpoint to MLflow if enabled
         if self.enable_mlflow and mlflow.active_run():
             try:
-                mlflow.log_artifacts(checkpoint_path, "checkpoints/latest")
-                print(f"Logged latest checkpoint to MLflow: checkpoints/latest")
+                # Log with epoch-specific path but also tag as latest
+                artifact_path = f"checkpoints/epoch_{pl_module.current_epoch}"
+                mlflow.log_artifacts(checkpoint_path, artifact_path)
+                
+                # Log metadata to identify the latest checkpoint
+                mlflow.log_param("latest_checkpoint_epoch", pl_module.current_epoch)
+                mlflow.log_param("latest_checkpoint_path", artifact_path)
+                
+                print(f"Logged checkpoint to MLflow: {artifact_path} (marked as latest)")
             except Exception as e:
                 print(f"Warning: Failed to log checkpoint to MLflow: {e}")
 
