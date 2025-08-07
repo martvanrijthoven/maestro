@@ -288,20 +288,20 @@ class Florence2Trainer(MaestroTrainer):
             output_dir=save_metrics_path,
         )
         
-        # Log model to MLflow if enabled
-        if self.config.enable_mlflow and mlflow.active_run():
-            try:
-                mlflow.pytorch.log_model(
-                    pytorch_model=self.model,
-                    artifact_path="model",
-                    registered_model_name=f"florence2_{self.config.optimization_strategy}",
-                )
-                logger.info("Model logged to MLflow successfully")
-            except Exception as e:
-                logger.warning(f"Failed to log model to MLflow: {e}")
+        # # Log model to MLflow if enabled #TODO log onnx model 
+        # if self.config.enable_mlflow and mlflow.active_run():
+        #     try:
+        #         mlflow.pytorch.log_model(
+        #             pytorch_model=self.model,
+        #             artifact_path="model",
+        #             registered_model_name=f"florence2_{self.config.optimization_strategy}",
+        #         )
+        #         logger.info("Model logged to MLflow successfully")
+        #     except Exception as e:
+        #         logger.warning(f"Failed to log model to MLflow: {e}")
             
-            # End the MLflow run
-            mlflow.end_run()
+        #     # End the MLflow run
+        #     mlflow.end_run()
 
 
 def train(config: Florence2Configuration | dict) -> None:
