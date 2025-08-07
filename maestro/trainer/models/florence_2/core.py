@@ -288,20 +288,20 @@ class Florence2Trainer(MaestroTrainer):
             output_dir=save_metrics_path,
         )
         
-        # # Log model to MLflow if enabled
-        # if self.config.enable_mlflow and mlflow.active_run():
-        #     try:
-        #         mlflow.pytorch.log_model(
-        #             pytorch_model=self.model,
-        #             artifact_path="model",
-        #             registered_model_name=f"florence2_{self.config.optimization_strategy}"
-        #         )
-        #         logger.info("Model logged to MLflow successfully")
-        #     except Exception as e:
-        #         logger.warning(f"Failed to log model to MLflow: {e}")
+        # Log model to MLflow if enabled
+        if self.config.enable_mlflow and mlflow.active_run():
+            try:
+                mlflow.pytorch.log_model(
+                    pytorch_model=self.model,
+                    artifact_path="model",
+                    registered_model_name=f"florence2_{self.config.optimization_strategy}",
+                )
+                logger.info("Model logged to MLflow successfully")
+            except Exception as e:
+                logger.warning(f"Failed to log model to MLflow: {e}")
             
-        #     # End the MLflow run
-        #     mlflow.end_run()
+            # End the MLflow run
+            mlflow.end_run()
 
 
 def train(config: Florence2Configuration | dict) -> None:
@@ -344,14 +344,19 @@ def train(config: Florence2Configuration | dict) -> None:
         processor=processor, model=model, train_loader=train_loader, valid_loader=valid_loader, config=config
     )
     save_checkpoints_path = os.path.join(config.output_dir, "checkpoints")
-    save_checkpoint_callback = SaveCheckpoint(result_path=save_checkpoints_path, save_model_callback=save_model)
+    save_checkpoint_callback = SaveCheckpoint(
+        result_path=save_checkpoints_path, 
+        save_model_callback=save_model,
+        enable_mlflow=config.enable_mlflow
+    )
     trainer = lightning.Trainer(
         max_epochs=config.epochs,
         accumulate_grad_batches=config.accumulate_grad_batches,
         check_val_every_n_epoch=1,
         limit_train_batches=config.limit_train_batches,
-        limit_val_batches=1.0,
+        limit_val_batches=1,
         log_every_n_steps=10,
         callbacks=[save_checkpoint_callback],
+        default_root_dir=config.output_dir,  # Keep Lightning logs in output_dir
     )
     trainer.fit(pl_module)
